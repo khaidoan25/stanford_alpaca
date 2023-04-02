@@ -23,6 +23,25 @@ import utils
 
 import fire
 
+from transformers import GPT2Tokenizer, GPT2LMHeadModel
+
+
+def encode_prompt_gpt2(prompt_instructions):
+    """Encode multiple prompt instructions into a single string."""
+    prompt = open("./my_prompt.txt").read() + "\n"
+
+    for idx, task_dict in enumerate(prompt_instructions):
+        (instruction, input, output) = task_dict["instruction"], task_dict["input"], task_dict["output"]
+        instruction = re.sub(r"\s+", " ", instruction).strip().rstrip(":")
+        input = "<noinput>" if input.lower() == "" else input
+        prompt += f"###\n"
+        prompt += f"{idx + 1}. Instruction: {instruction}\n"
+        prompt += f"{idx + 1}. Input:\n{input}\n"
+        prompt += f"{idx + 1}. Output:\n{output}\n"
+    prompt += f"###\n"
+    prompt += f"{idx + 2}. Instruction:"
+    return prompt
+
 
 def encode_prompt(prompt_instructions):
     """Encode multiple prompt instructions into a single string."""
@@ -207,6 +226,62 @@ def generate_instruction_following_data(
         print(f"Request {request_idx} took {request_duration:.2f}s, processing took {process_duration:.2f}s")
         print(f"Generated {total} instructions, kept {keep} instructions")
         utils.jdump(machine_instruction_data, os.path.join(output_dir, "regen.json"))
+        
+        
+def generate_instruction_following_data_gpt2(
+    output_dir="./",
+    seed_tasks_path="./my_seed_tasks.jsonl",
+    num_instructions_to_generate=5000,
+    num_prompt_instructions=3,
+):
+    
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", bos_token='<startoftext>',
+                                              eos_token='<endoftext>', pad_token='<pad>')
+    model = GPT2LMHeadModel.from_pretrained("gpt2")
+    model.resize_token_embeddings(len(tokenizer))
+    model.eval()
+    
+    seed_tasks = [json.loads(l) for l in open(seed_tasks_path, "r")]
+    seed_instruction_data = [
+        {"instruction": t["instruction"], "input": t["instances"][0]["input"], "output": t["instances"][0]["output"]}
+        for t in seed_tasks
+    ]
+    print(f"Loaded {len(seed_instruction_data)} human-written seed instructions")
+
+    os.makedirs(output_dir, exist_ok=True)
+    request_idx = 0
+    # load the LM-generated instructions
+    machine_instruction_data = []
+    if os.path.exists(os.path.join(output_dir, "regen.json")):
+        machine_instruction_data = utils.jload(os.path.join(output_dir, "regen.json"))
+        print(f"Loaded {len(machine_instruction_data)} machine-generated instructions")
+
+    # similarities = {}
+    scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
+
+    # now let's generate new instructions!
+    progress_bar = tqdm.tqdm(total=num_instructions_to_generate)
+    if machine_instruction_data:
+        progress_bar.update(len(machine_instruction_data))
+
+    # first we tokenize all the seed instructions and generated machine instructions
+    all_instructions = [d["instruction"] for d in seed_instruction_data] + [
+        d["instruction"] for d in machine_instruction_data
+    ]
+    all_instruction_tokens = [scorer._tokenizer.tokenize(inst) for inst in all_instructions]
+
+    while len(machine_instruction_data) < num_instructions_to_generate:
+        request_idx += 1
+        
+        prompt_instructions = random.sample(seed_instruction_data, num_prompt_instructions)
+        prompt = encode_prompt_gpt2(prompt_instructions)
+        generated = tokenizer(prompt, return_tensors="pt").input_ids
+        sample_output = model.generate(generated, do_sample=False, top_k=5, max_length=768, num_return_sequences=0)
+        predicted_text = tokenizer.decode(sample_output[0], skip_special_tokens=True)
+        with open("result.txt", "w") as f:
+            f.write(predicted_text)
+        
+        break
         
         
 def generate_instruction_alpaca(
