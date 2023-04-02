@@ -1,10 +1,12 @@
 : "${MODEL_PATH?environment variable MODEL_PATH is unset}"
+: "${OUTPUT_DIR?environment variable OUTPUT_DIR is unset}"
+: "${NUM_GPU?environment variable NUM_GPU is unset}"
 
-torchrun --standalone --nproc_per_node=2 train.py \
+torchrun --standalone --nproc_per_node=$NUM_GPU train.py \
     --model_name_or_path $MODEL_PATH \
     --data_path ./data/alpaca_5000.json \
     --fp16 True \
-    --output_dir ./gpt_finetune \
+    --output_dir $OUTPUT_DIR \
     --num_train_epochs 3 \
     --per_device_train_batch_size 8 \
     --per_device_eval_batch_size 8 \
